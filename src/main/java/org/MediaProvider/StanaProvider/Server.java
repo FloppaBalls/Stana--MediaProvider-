@@ -35,27 +35,66 @@ public class Server extends Thread{
 		}
 	}
 	
-	class AzureUploader{
-		String connectStr = System.getenv("AZURE_STORAGE_CONNECTION_STRING");
-		BlobServiceClient blobServiceClient;
-		BlobContainerClient blobContainerClient;
+	class Uploader{
 		int count = 0;
 		long usedStorage = 0;
 		long maxStorage = 5000000000L;
-		
-		public AzureUploader() {
-			blobServiceClient = new BlobServiceClientBuilder().connectionString(connectStr).buildClient();
-			blobContainerClient = blobServiceClient.getBlobContainerClient("images");
-			for(BlobItem blobItem : blobContainerClient.listBlobs())
+		String storageDirectoryName;
+		String storagePath;
+		public Uploader() {
+			storageDirectoryName = "storage";
+			storagePath = System.getProperty("user.dir") + '\\' + storageDirectoryName;
+			System.out.println(storagePath);
+			File dir = new File(storagePath);
+			if(!dir.exists())
 			{
-				count++;
-				usedStorage += blobItem.getProperties().getContentLength();
+				boolean created = dir.mkdirs();
+				if(created == false)
+					System.out.println("Failed to create storage directory");
+				else 
+					System.out.println("Sucessfully created storage directory");
 			}
+			
+			File list[] = dir.listFiles();
+			if(list == null)
+			{
+				count = list.length;
+				for(File f : list)
+				{
+					if(f.isFile() == true)
+					{
+						usedStorage += f.length();
+					}
+				}
+			}
+			else
+				count = 0;
+			
+			
+			
 		}
-		public void upload(MediaData data)
+		public String upload(MediaData data)
 		{
-			BlobClient blobClient = blobContainerClient.getBlobClient(provideFileName(data.extension));
-			blobClient.upload(new ByteArrayInputStream(data.blob) , data.blob.length , true);
+			String fileName = provideFileName(data.extension);
+			try {	
+				String filePath = storagePath + '\\' + fileName + '.' + extensionToStr(data.extension);
+				File file = new File(filePath);
+				if(file.exists() == false)
+				{
+					boolean result = file.createNewFile();
+					if(result == true)
+					{
+						FileOutputStream writer = new FileOutputStream(filePath);
+						writer.write(data.blob);
+						writer.flush();
+						System.out.println("Succesfully added a new file to the storage");
+					}
+				}
+			}catch(IOException e){
+				System.out.println(e.toString());
+			}
+			
+			return fileName;
 		}
 		public String provideFileName(int extension)
 		{
@@ -68,11 +107,11 @@ public class Server extends Thread{
 			}
 			String countStr = String.valueOf(count);
 			if(count < 10)
-				countStr += "0" + countStr;
+				countStr = "0" + countStr;
 			if(count < 100)
-				countStr += "0" + countStr;
+				countStr = "0" + countStr;
 			
-			fileName += countStr + extensionStr + '.' + extensionToStr(extension);
+			fileName = fileName + countStr + '_' + extensionStr;
 			return fileName;
 		}
 		public String extensionToStr(int extension)
@@ -93,7 +132,7 @@ public class Server extends Thread{
 		PrintWriter writer;
 		Socket client;
 		MediaHandler handler;
-		AzureUploader uploader;
+		Uploader uploader;
 		
 		private int byteLimit = 1204;
 		
@@ -104,7 +143,7 @@ public class Server extends Thread{
 				writer = new PrintWriter(client.getOutputStream());
 				reader = new DataInputStream(client.getInputStream());
 				handler = new MediaHandler(client);
-				uploader = new AzureUploader();
+				uploader = new Uploader();
 				
 			}catch(IOException e)
 			{
@@ -120,12 +159,13 @@ public class Server extends Thread{
 				byte[] data = new byte[byteLimit];
 				
 				//System.out.println("Before");
-				int charsRead = reader.read(data);
+				int bytesRead = reader.read(data);
 				
-				System.out.println("Bytes read: " + charsRead);
+				System.out.println("Bytes read: " + bytesRead);
 				//System.out.println("After");
-				if(charsRead != -1)
+				if(bytesRead != -1)
 				{
+					data = Arrays.copyOfRange(data, 0 , bytesRead);
 					handleMessage(data);
 				}
 				
@@ -139,6 +179,7 @@ public class Server extends Thread{
 			
 			List<byte[]> parameterList;
 			String sendingCmd = "";
+			String aux = "";
 			switch(req) 
 			{
 			//request chunkId
@@ -159,7 +200,10 @@ public class Server extends Thread{
 				handler.addChunk(parameterList.get(1) , Utility.parseInt(parameterList.get(0)));
 				if(handler.mediaReady())
 				{
-					uploader.upload(handler.readyMedia());
+					aux = uploader.upload(handler.readyMedia());
+					aux = InfoToServer.UploadedFileName.toString() + '(' + String.valueOf(handler.readyMedia().id) + ',' + aux + ')';
+					writer.write(aux);
+					writer.flush();
 				}
 				break;
 			default:
